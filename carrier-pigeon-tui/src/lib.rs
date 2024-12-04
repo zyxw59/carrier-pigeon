@@ -1,5 +1,5 @@
 use crossterm::event::{Event, KeyCode, KeyEvent};
-use pigeon_common::{Message, MessageKey, MessageList};
+use carrier_pigeon_common::{Message, MessageKey, MessageList};
 use ratatui::{
     buffer::Buffer,
     layout::Rect,

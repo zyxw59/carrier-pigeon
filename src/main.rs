@@ -1,5 +1,5 @@
 use clap::Parser;
-use pigeon_common::Message;
+use carrier_pigeon_common::Message;
 use tokio::sync::mpsc;
 use tracing_subscriber::prelude::*;
 
@@ -19,8 +19,8 @@ async fn main() -> color_eyre::Result<()> {
         .init();
 
     let (tx, rx) = mpsc::unbounded_channel();
-    tokio::spawn(pigeon_fake_messages::message_sender(tx.clone()));
-    pigeon_tui::run(rx).await?;
+    tokio::spawn(carrier_pigeon_fake_messages::message_sender(tx.clone()));
+    carrier_pigeon_tui::run(rx).await?;
     Ok(())
 }
 

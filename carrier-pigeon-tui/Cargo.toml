@@ -1,5 +1,5 @@
 [package]
-name = "pigeon-tui"
+name = "carrier-pigeon-tui"
 version.workspace = true
 license.workspace = true
 authors.workspace = true
@@ -8,7 +8,7 @@ edition.workspace = true
 [dependencies]
 crossterm = { version = "0.28.1", features = ["event-stream"] }
 futures = "0.3.31"
-pigeon-common = { workspace = true }
+carrier-pigeon-common = { workspace = true }
 ratatui = "0.29.0"
 thiserror = "2.0.3"
 tokio = { version = "1.42.0", features = ["sync"] }

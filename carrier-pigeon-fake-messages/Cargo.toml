@@ -1,5 +1,5 @@
 [package]
-name = "pigeon-fake-messages"
+name = "carrier-pigeon-fake-messages"
 version.workspace = true
 license.workspace = true
 authors.workspace = true
@@ -8,7 +8,7 @@ edition.workspace = true
 [dependencies]
 chrono = "0.4.38"
 lipsum = "0.9.1"
-pigeon-common = { workspace = true }
+carrier-pigeon-common = { workspace = true }
 rand = "0.8.5"
 tokio = { version = "1.42.0", features = ["sync", "time"] }
 uuid = { version = "1.11.0", features = ["v7"] }

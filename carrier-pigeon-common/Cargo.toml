@@ -1,5 +1,5 @@
 [package]
-name = "pigeon-common"
+name = "carrier-pigeon-common"
 version.workspace = true
 license.workspace = true
 authors.workspace = true

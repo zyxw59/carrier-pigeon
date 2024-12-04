@@ -145,14 +145,51 @@ checksum = "325918d6fe32f23b19878fe4b34794ae41fc19ddbe53b10571a4874d44ffd39b"
 name = "carrier-pigeon"
 version = "0.1.0"
 dependencies = [
+ "carrier-pigeon-common",
+ "carrier-pigeon-fake-messages",
+ "carrier-pigeon-tui",
  "clap",
  "color-eyre",
- "pigeon-common",
- "pigeon-fake-messages",
- "pigeon-tui",
  "tokio",
  "tracing",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "carrier-pigeon-common"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "tokio",
+]
+
+[[package]]
+name = "carrier-pigeon-fake-messages"
+version = "0.1.0"
+dependencies = [
+ "carrier-pigeon-common",
+ "chrono",
+ "lipsum",
+ "rand",
+ "tokio",
+ "uuid",
+]
+
+[[package]]
+name = "carrier-pigeon-matrix"
+version = "0.1.0"
+
+[[package]]
+name = "carrier-pigeon-tui"
+version = "0.1.0"
+dependencies = [
+ "carrier-pigeon-common",
+ "crossterm",
+ "futures",
+ "ratatui",
+ "thiserror",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]
@@ -775,43 +812,6 @@ name = "paste"
 version = "1.0.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "57c0d7b74b563b49d38dae00a0c37d4d6de9b432382b2892f0574ddcae73fd0a"
-
-[[package]]
-name = "pigeon-common"
-version = "0.1.0"
-dependencies = [
- "chrono",
- "tokio",
-]
-
-[[package]]
-name = "pigeon-fake-messages"
-version = "0.1.0"
-dependencies = [
- "chrono",
- "lipsum",
- "pigeon-common",
- "rand",
- "tokio",
- "uuid",
-]
-
-[[package]]
-name = "pigeon-matrix"
-version = "0.1.0"
-
-[[package]]
-name = "pigeon-tui"
-version = "0.1.0"
-dependencies = [
- "crossterm",
- "futures",
- "pigeon-common",
- "ratatui",
- "thiserror",
- "tokio",
- "tracing",
-]
 
 [[package]]
 name = "pin-project-lite"
