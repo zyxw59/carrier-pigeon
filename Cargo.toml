@@ -18,17 +18,17 @@ carrier-pigeon-common = { path = "./carrier-pigeon-common" }
 
 [package]
 name = "carrier-pigeon"
-version.workspace = true
-license.workspace = true
-authors.workspace = true
-edition.workspace = true
+version = { workspace = true }
+license = { workspace = true }
+authors = { workspace = true }
+edition = { workspace = true }
 
 [dependencies]
-clap = { version = "4.5.21", features = ["derive"] }
-color-eyre = "0.6.3"
 carrier-pigeon-common = { workspace = true }
 carrier-pigeon-fake-messages = { path = "./carrier-pigeon-fake-messages" }
 carrier-pigeon-tui = { path = "./carrier-pigeon-tui" }
+clap = { version = "4.5.21", features = ["derive"] }
+color-eyre = "0.6.3"
 tokio = { version = "1.41.1", features = ["full"] }
 tracing = "0.1.41"
 tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
