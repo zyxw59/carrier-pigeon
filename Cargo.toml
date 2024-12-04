@@ -5,14 +5,23 @@ members = [
   "pigeon-matrix",
   "pigeon-tui"
 ]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+license = "MIT"
+authors = ["mle <zyxw59@gmail.com>"]
+edition = "2021"
 
 [workspace.dependencies]
 pigeon-common = { path = "./pigeon-common" }
 
 [package]
 name = "carrier-pigeon"
-version = "0.1.0"
-edition = "2021"
+version.workspace = true
+license.workspace = true
+authors.workspace = true
+edition.workspace = true
 
 [dependencies]
 clap = { version = "4.5.21", features = ["derive"] }

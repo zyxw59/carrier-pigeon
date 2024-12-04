@@ -1,7 +1,9 @@
 [package]
 name = "pigeon-tui"
-version = "0.1.0"
-edition = "2021"
+version.workspace = true
+license.workspace = true
+authors.workspace = true
+edition.workspace = true
 
 [dependencies]
 crossterm = { version = "0.28.1", features = ["event-stream"] }
