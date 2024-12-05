@@ -1,5 +1,5 @@
-use clap::Parser;
 use carrier_pigeon_common::Message;
+use clap::Parser;
 use tokio::sync::mpsc;
 use tracing_subscriber::prelude::*;
 

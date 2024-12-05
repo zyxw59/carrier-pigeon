@@ -1,5 +1,5 @@
-use chrono::Utc;
 use carrier_pigeon_common::{Message, MessageBody, MessageKey, RichText, Room, User};
+use chrono::Utc;
 use rand::prelude::{Rng, SliceRandom};
 use uuid::Uuid;
 
