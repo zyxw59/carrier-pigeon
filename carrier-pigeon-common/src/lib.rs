@@ -1,4 +1,4 @@
-use std::{collections::BTreeMap, sync::Arc};
+use std::{borrow::Borrow, collections::BTreeMap, sync::Arc};
 
 use chrono::{DateTime, Utc};
 
@@ -35,6 +35,12 @@ pub struct Message {
     pub body: MessageBody,
 }
 
+impl Message {
+    pub fn key(&self) -> MessageKey {
+        self.key.clone()
+    }
+}
+
 #[derive(Clone, Debug)]
 pub enum MessageBody {
     Text(RichText),
@@ -61,7 +67,18 @@ impl MessageList {
         self.messages.insert(key, message)
     }
 
-    pub fn iter(&self) -> impl Iterator<Item = &Message> {
+    pub fn iter(&self) -> impl DoubleEndedIterator<Item = &Message> {
         self.messages.values()
+    }
+
+    pub fn range<Q>(
+        &self,
+        range: impl std::ops::RangeBounds<Q>,
+    ) -> impl DoubleEndedIterator<Item = &Message>
+    where
+        MessageKey: Borrow<Q>,
+        Q: Ord + ?Sized,
+    {
+        self.messages.range(range).map(|(_, v)| v)
     }
 }
