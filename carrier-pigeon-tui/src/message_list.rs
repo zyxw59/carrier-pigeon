@@ -20,7 +20,7 @@ impl Default for MessageListView {
             messages: Default::default(),
             cursor: None,
             list_state: Default::default(),
-            list_items: List::default().highlight_symbol("->"),
+            list_items: List::default().highlight_symbol("-> "),
         }
     }
 }
@@ -31,7 +31,7 @@ impl MessageListView {
         self.cursor = match &self.cursor {
             Some(cursor) => self
                 .messages
-                .range((Bound::Unbounded, Bound::Excluded(cursor)))
+                .range((Bound::Excluded(cursor), Bound::Unbounded))
                 .next(),
             None => self.messages.iter().next(),
         }
@@ -79,7 +79,7 @@ impl MessageListView {
                 ListItem::new(format!("{msg:?}"))
             })
             .collect::<Vec<_>>();
-        self.list_state = std::mem::take(&mut self.list_state).with_selected(selected_idx);
+        self.list_state.select(selected_idx);
         self.list_items = std::mem::take(&mut self.list_items).items(items);
     }
 }
