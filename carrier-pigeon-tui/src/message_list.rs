@@ -1,9 +1,10 @@
 use std::collections::BTreeMap;
 
-use carrier_pigeon_common::{Message, MessageKey};
+use carrier_pigeon_common::{Message, MessageBody, MessageKey, RichText};
 use ratatui::{
     buffer::Buffer,
     layout::Rect,
+    text::{Line, Text},
     widgets::{List, ListItem, ListState, StatefulWidget, Widget},
 };
 
@@ -108,7 +109,7 @@ impl MessageListView {
                 if Some(&msg.key) == self.cursor.as_ref() {
                     selected_idx = Some(idx);
                 }
-                ListItem::new(format!("{msg:?}"))
+                ListItem::new(message_to_text(msg))
             })
             .collect::<Vec<_>>();
         self.list_state.select(selected_idx);
@@ -124,4 +125,21 @@ impl Widget for &mut MessageListView {
         }
         StatefulWidget::render(&self.list_items, area, buffer, &mut self.list_state);
     }
+}
+
+fn message_to_text(message: &Message) -> Text<'static> {
+    // TODO: configuration
+    let header = Line::raw(format!(
+        "{time} / {room} / {sender} ({sender_id})",
+        time = message.key.timestamp,
+        // TODO: spaces, threads, replies
+        room = message.room.display_name,
+        sender = message.sender.display_name,
+        sender_id = message.sender.identifier,
+    ));
+    let body = match &message.body {
+        // TODO: wrapping
+        MessageBody::Text(RichText(text)) => Line::raw(text.to_string()),
+    };
+    Text::from(vec![header, body])
 }
