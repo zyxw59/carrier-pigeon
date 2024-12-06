@@ -1,4 +1,6 @@
-use carrier_pigeon_common::{Message, MessageKey, MessageList};
+use std::collections::BTreeMap;
+
+use carrier_pigeon_common::{Message, MessageKey};
 use ratatui::{
     buffer::Buffer,
     layout::Rect,
@@ -7,7 +9,7 @@ use ratatui::{
 
 #[derive(Debug)]
 pub struct MessageListView {
-    messages: MessageList,
+    messages: BTreeMap<MessageKey, Message>,
     cursor: Option<MessageKey>,
     list_state: ListState,
     list_items: List<'static>,
@@ -35,7 +37,7 @@ impl MessageListView {
                 .next(),
             None => self.messages.iter().next(),
         }
-        .map(Message::key)
+        .map(|(k, _)| k.clone())
         .or_else(|| self.cursor.clone());
         self.list_state.select_next();
     }
@@ -45,23 +47,23 @@ impl MessageListView {
             Some(cursor) => self.messages.range(..cursor).next_back(),
             None => self.messages.iter().next_back(),
         }
-        .map(Message::key)
+        .map(|(k, _)| k.clone())
         .or_else(|| self.cursor.clone());
         self.list_state.select_previous();
     }
 
     pub fn select_first(&mut self) {
-        self.cursor = self.messages.iter().next().map(Message::key);
+        self.cursor = self.messages.keys().next().cloned();
         self.list_state.select_first();
     }
 
     pub fn select_last(&mut self) {
-        self.cursor = self.messages.iter().next_back().map(Message::key);
+        self.cursor = self.messages.keys().next_back().cloned();
         self.list_state.select_last();
     }
 
     pub fn insert(&mut self, message: Message) {
-        self.messages.insert(message);
+        self.messages.insert(message.key(), message);
         self.redraw_list();
     }
 
@@ -70,7 +72,7 @@ impl MessageListView {
         // TODO: find selected index if `self.cursor` points to a deleted message
         let items = self
             .messages
-            .iter()
+            .values()
             .enumerate()
             .map(|(idx, msg)| {
                 if Some(&msg.key) == self.cursor.as_ref() {

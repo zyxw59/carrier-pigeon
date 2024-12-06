@@ -1,4 +1,4 @@
-use std::{borrow::Borrow, collections::BTreeMap, sync::Arc};
+use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
 
@@ -50,35 +50,3 @@ pub enum MessageBody {
 // TODO: rich text
 #[derive(Clone, Debug)]
 pub struct RichText(pub Arc<str>);
-
-#[derive(Clone, Debug, Default)]
-pub struct MessageList {
-    messages: BTreeMap<MessageKey, Message>,
-    // TODO: channel for informing consumers of changes?
-}
-
-impl MessageList {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    pub fn insert(&mut self, message: Message) -> Option<Message> {
-        let key = message.key.clone();
-        self.messages.insert(key, message)
-    }
-
-    pub fn iter(&self) -> impl DoubleEndedIterator<Item = &Message> {
-        self.messages.values()
-    }
-
-    pub fn range<Q>(
-        &self,
-        range: impl std::ops::RangeBounds<Q>,
-    ) -> impl DoubleEndedIterator<Item = &Message>
-    where
-        MessageKey: Borrow<Q>,
-        Q: Ord + ?Sized,
-    {
-        self.messages.range(range).map(|(_, v)| v)
-    }
-}
