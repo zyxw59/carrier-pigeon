@@ -13,6 +13,8 @@ pub struct MessageListView {
     cursor: Option<MessageKey>,
     list_state: ListState,
     list_items: List<'static>,
+    /// Marks whether the `list_state` and `list_items` are out-of-sync
+    dirty: bool,
     // TODO: filters
 }
 
@@ -23,6 +25,7 @@ impl Default for MessageListView {
             cursor: None,
             list_state: Default::default(),
             list_items: List::default().highlight_symbol("-> "),
+            dirty: false,
         }
     }
 }
@@ -64,12 +67,39 @@ impl MessageListView {
 
     pub fn insert(&mut self, message: Message) {
         self.messages.insert(message.key(), message);
-        self.redraw_list();
+        self.dirty = true;
+    }
+
+    pub fn delete(&mut self, message: &MessageKey) {
+        // update the cursor if the message to be deleted is selected
+        if self.cursor.as_ref() == Some(message) {
+            use std::ops::Bound;
+            self.cursor = self
+                .messages
+                // first try to move the cursor forwards
+                .range((Bound::Excluded(message), Bound::Unbounded))
+                .next()
+                // but if the cursor is already at the end, try moving backwards
+                .or_else(|| self.messages.range(..message).next_back())
+                .map(|(k, _)| k.clone())
+            // if that fails, the deleted message was the only one, so the cursor is now `None`
+        }
+        self.messages.remove(message);
+        self.dirty = true;
+    }
+
+    pub fn selected(&self) -> Option<&Message> {
+        self.cursor.as_ref().and_then(|key| self.messages.get(key))
+    }
+
+    pub fn delete_selected(&mut self) {
+        if let Some(selected) = &self.cursor {
+            self.delete(&selected.clone());
+        }
     }
 
     fn redraw_list(&mut self) {
         let mut selected_idx = None;
-        // TODO: find selected index if `self.cursor` points to a deleted message
         let items = self
             .messages
             .values()
@@ -83,11 +113,15 @@ impl MessageListView {
             .collect::<Vec<_>>();
         self.list_state.select(selected_idx);
         self.list_items = std::mem::take(&mut self.list_items).items(items);
+        self.dirty = false;
     }
 }
 
 impl Widget for &mut MessageListView {
     fn render(self, area: Rect, buffer: &mut Buffer) {
+        if self.dirty {
+            self.redraw_list();
+        }
         StatefulWidget::render(&self.list_items, area, buffer, &mut self.list_state);
     }
 }

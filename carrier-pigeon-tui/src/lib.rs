@@ -59,6 +59,10 @@ impl State {
                 code: KeyCode::Char('g'),
                 ..
             }) => self.messages.select_first(),
+            Event::Key(KeyEvent {
+                code: KeyCode::Char('d'),
+                ..
+            }) => self.messages.delete_selected(),
             _ => tracing::debug!("{event:?}"),
         }
     }
