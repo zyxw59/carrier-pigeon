@@ -4,6 +4,7 @@ use ratatui::{buffer::Buffer, layout::Rect, widgets::Widget};
 use tokio::sync::mpsc;
 
 mod message_list;
+mod keymap;
 
 use message_list::MessageListView;
 
