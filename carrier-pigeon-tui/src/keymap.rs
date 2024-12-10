@@ -192,6 +192,15 @@ impl<A: Clone> Keymap<A> {
             };
             match event {
                 Ok(Some(event)) => {
+                    // We store what is essentially a rolling window of recent keypresses. with
+                    // each new keypress, we check that window against our keymap to see if it is
+                    // a valid prefix to any mapping. If it is, we then check if it is a complete
+                    // mapping (not just a prefix), and then return the mapped action. If it is
+                    // not a valid prefix, we drop the least recent keypress, and repeat.
+                    //
+                    // In this manner, except for the most recent keypress, the buffer is always a
+                    // valid prefix of at least one mapping, so its size is limited by the length
+                    // of the longest mapping.
                     buffer.push(event);
                     let (skipped, action) = (0..buffer.len())
                         .find_map(|i| self.get(&buffer[i..]).map(|action| (i, action)))
