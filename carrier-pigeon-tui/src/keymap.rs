@@ -197,8 +197,7 @@ impl<A: Clone> Keymap<A> {
                         .find_map(|i| self.get(&buffer[i..]).map(|action| (i, action)))
                         .unwrap_or((buffer.len(), None));
                     passthru_callback(&buffer[..skipped]);
-                    buffer.rotate_left(skipped);
-                    buffer.truncate(buffer.len() - skipped);
+                    buffer.drain(..skipped).for_each(drop);
                     if let Some(action) = action {
                         buffer.clear();
                         action_callback(action);
