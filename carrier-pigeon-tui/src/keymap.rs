@@ -180,10 +180,10 @@ impl<A: Clone> Keymap<A> {
     pub async fn run(
         &mut self,
         keys_rx: &mut mpsc::UnboundedReceiver<KeyEvent>,
-        mut passthru_callback: impl FnMut(&[KeyEvent]),
+        passthru_callback: impl FnMut(&[KeyEvent]),
         mut action_callback: impl FnMut(A),
     ) {
-        let mut buffer = Vec::<KeyEvent>::new();
+        let mut buffer = KeyBuffer::new(passthru_callback);
         loop {
             let event = if buffer.is_empty() {
                 Ok(keys_rx.recv().await)
@@ -196,8 +196,7 @@ impl<A: Clone> Keymap<A> {
                     let (skipped, action) = (0..buffer.len())
                         .find_map(|i| self.get(&buffer[i..]).map(|action| (i, action)))
                         .unwrap_or((buffer.len(), None));
-                    passthru_callback(&buffer[..skipped]);
-                    buffer.drain(..skipped).for_each(drop);
+                    buffer.passthru_n(skipped);
                     if let Some(action) = action {
                         buffer.clear();
                         action_callback(action);
@@ -208,7 +207,7 @@ impl<A: Clone> Keymap<A> {
                     break;
                 }
                 Err(_) => {
-                    buffer.clear();
+                    buffer.passthru_all();
                 }
             }
         }
@@ -235,5 +234,51 @@ impl<A: Clone> Keymap<A> {
         self.entries_with_prefix(keys)
             .next()
             .map(|(k, v)| (k == keys).then_some(v.clone()))
+    }
+}
+
+struct KeyBuffer<F: FnMut(&[KeyEvent])> {
+    buffer: Vec<KeyEvent>,
+    passthru_callback: F,
+}
+
+impl<F: FnMut(&[KeyEvent])> KeyBuffer<F> {
+    pub fn new(passthru_callback: F) -> Self {
+        Self {
+            buffer: Vec::new(),
+            passthru_callback,
+        }
+    }
+
+    /// Call the callback on the first `n` items, then remove them from the buffer.
+    pub fn passthru_n(&mut self, n: usize) {
+        (self.passthru_callback)(&self.buffer[..n]);
+        self.buffer.drain(n..).for_each(drop);
+    }
+
+    /// Call the callback on the whole buffer, then clear it.
+    pub fn passthru_all(&mut self) {
+        (self.passthru_callback)(&self.buffer);
+        self.buffer.clear();
+    }
+}
+
+impl<F: FnMut(&[KeyEvent])> std::ops::Deref for KeyBuffer<F> {
+    type Target = Vec<KeyEvent>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.buffer
+    }
+}
+
+impl<F: FnMut(&[KeyEvent])> std::ops::DerefMut for KeyBuffer<F> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.buffer
+    }
+}
+
+impl<F: FnMut(&[KeyEvent])> Drop for KeyBuffer<F> {
+    fn drop(&mut self) {
+        self.passthru_all();
     }
 }
