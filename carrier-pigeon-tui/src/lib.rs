@@ -3,9 +3,10 @@ use crossterm::event::{Event, KeyCode, KeyEvent};
 use ratatui::{buffer::Buffer, layout::Rect, widgets::Widget};
 use tokio::sync::mpsc;
 
-mod message_list;
 mod keymap;
+mod message_list;
 
+use keymap::Keymap;
 use message_list::MessageListView;
 
 pub async fn run(messages: mpsc::UnboundedReceiver<Message>) -> std::io::Result<()> {
@@ -15,11 +16,38 @@ pub async fn run(messages: mpsc::UnboundedReceiver<Message>) -> std::io::Result<
     res
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 struct State {
     stopped: bool,
     messages: MessageListView,
+    main_keys: Keymap<MainEvent>,
     mode: Mode,
+}
+
+const DEFAULT_KEY_TIMEOUT: tokio::time::Duration = tokio::time::Duration::from_millis(500);
+
+impl Default for State {
+    fn default() -> Self {
+        Self {
+            stopped: false,
+            messages: Default::default(),
+            main_keys: Keymap {
+                keys: [
+                    ("q", MainEvent::Quit),
+                    ("j", MainEvent::SelectPrev),
+                    ("k", MainEvent::SelectNext),
+                    ("gg", MainEvent::SelectFirst),
+                    ("G", MainEvent::SelectLast),
+                    ("dd", MainEvent::DeleteSelected),
+                ]
+                .into_iter()
+                .map(|(s, a)| (keymap::parse_key_sequence(s).unwrap(), a))
+                .collect(),
+                timeout: DEFAULT_KEY_TIMEOUT,
+            },
+            mode: Mode::Main,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -27,6 +55,16 @@ enum Mode {
     /// Main view, with the message list selected
     #[default]
     Main,
+}
+
+#[derive(Debug, Clone)]
+enum MainEvent {
+    Quit,
+    SelectPrev,
+    SelectNext,
+    SelectFirst,
+    SelectLast,
+    DeleteSelected,
 }
 
 impl State {

@@ -11,10 +11,59 @@ use tokio::{sync::mpsc, time::Duration};
 // need to be passed thru when the timeout expires, so we can't just check the deadline when
 // processing a new input
 
+pub fn parse_key_sequence(input: &str) -> Result<Vec<KeyEvent>, nom::error::Error<&str>> {
+    use nom::Finish;
+    nom::multi::many1(parse_key)(input).finish().map(|(_, k)| k)
+}
+
+fn parse_key(input: &str) -> nom::IResult<&str, KeyEvent> {
+    use nom::{
+        branch::alt,
+        bytes::complete::tag,
+        character::complete::one_of,
+        combinator::map,
+        sequence::{delimited, separated_pair},
+    };
+
+    let key = alt((KeyCode::parse_char, KeyCode::parse_special));
+    let modifiers = nom::multi::fold_many1(
+        map(one_of("ACMS"), |c| match c {
+            'A' => KeyModifiers::ALT,
+            'C' => KeyModifiers::CONTROL,
+            'M' => KeyModifiers::META,
+            'S' => KeyModifiers::SHIFT,
+            _ => unreachable!(),
+        }),
+        KeyModifiers::empty,
+        KeyModifiers::union,
+    );
+
+    let bracketed = alt((
+        map(
+            separated_pair(modifiers, tag("-"), key),
+            |(modifiers, code)| KeyEvent { modifiers, code },
+        ),
+        map(KeyCode::parse_special, KeyEvent::from),
+    ));
+    alt((
+        delimited(tag("<"), bracketed, tag(">")),
+        map(KeyCode::parse_char, KeyEvent::from),
+    ))(input)
+}
+
 #[derive(Clone, Copy, Debug, Eq)]
 pub struct KeyEvent {
     pub code: KeyCode,
     pub modifiers: KeyModifiers,
+}
+
+impl From<KeyCode> for KeyEvent {
+    fn from(code: KeyCode) -> Self {
+        Self {
+            code,
+            modifiers: KeyModifiers::empty(),
+        }
+    }
 }
 
 // manually impl `Ord` since `KeyModifiers` isn't `Ord`
@@ -63,6 +112,39 @@ pub enum KeyCode {
     Unknown,
 }
 
+impl KeyCode {
+    fn parse_char(input: &str) -> nom::IResult<&str, Self> {
+        nom::combinator::map(
+            nom::character::complete::satisfy(nom_unicode::is_alphanumeric),
+            Self::Char,
+        )(input)
+    }
+
+    fn parse_special(input: &str) -> nom::IResult<&str, Self> {
+        use nom::{
+            bytes::complete::tag,
+            combinator::{map, value},
+        };
+        nom::branch::alt((
+            value(Self::Backspace, tag("BS")),
+            value(Self::Delete, tag("Del")),
+            value(Self::Enter, tag("CR")),
+            value(Self::Left, tag("Left")),
+            value(Self::Right, tag("Right")),
+            value(Self::Up, tag("Up")),
+            value(Self::Down, tag("Down")),
+            value(Self::Home, tag("Home")),
+            value(Self::End, tag("End")),
+            value(Self::PageUp, tag("PageUp")),
+            value(Self::PageDown, tag("PageDown")),
+            value(Self::Tab, tag("Tab")),
+            value(Self::Insert, tag("Ins")),
+            value(Self::Escape, tag("Esc")),
+            map(nom::character::complete::u8, Self::F),
+        ))(input)
+    }
+}
+
 impl From<crossterm::event::KeyCode> for KeyCode {
     fn from(code: crossterm::event::KeyCode) -> Self {
         use crossterm::event::KeyCode as Kc;
@@ -88,6 +170,7 @@ impl From<crossterm::event::KeyCode> for KeyCode {
     }
 }
 
+#[derive(Clone, Debug)]
 pub struct Keymap<A> {
     pub keys: BTreeMap<Vec<KeyEvent>, A>,
     pub timeout: Duration,
