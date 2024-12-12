@@ -1,12 +1,12 @@
 use carrier_pigeon_common::Message;
-use crossterm::event::{Event, KeyCode, KeyEvent};
+use crossterm::event::Event;
 use ratatui::{buffer::Buffer, layout::Rect, widgets::Widget};
 use tokio::sync::mpsc;
 
 mod keymap;
 mod message_list;
 
-use keymap::Keymap;
+use keymap::{Keymap, KeymapHandler};
 use message_list::MessageListView;
 
 pub async fn run(messages: mpsc::UnboundedReceiver<Message>) -> std::io::Result<()> {
@@ -74,36 +74,8 @@ impl State {
         }
     }
 
-    fn handle_main_event(&mut self, event: Event) {
-        // TODO: configuration
-        // TODO: sequences
-        match event {
-            Event::Key(KeyEvent {
-                code: KeyCode::Char('q'),
-                ..
-            }) => self.stopped = true,
-            Event::Key(KeyEvent {
-                code: KeyCode::Char('j'),
-                ..
-            }) => self.messages.select_next(),
-            Event::Key(KeyEvent {
-                code: KeyCode::Char('k'),
-                ..
-            }) => self.messages.select_prev(),
-            Event::Key(KeyEvent {
-                code: KeyCode::Char('G'),
-                ..
-            }) => self.messages.select_last(),
-            Event::Key(KeyEvent {
-                code: KeyCode::Char('g'),
-                ..
-            }) => self.messages.select_first(),
-            Event::Key(KeyEvent {
-                code: KeyCode::Char('d'),
-                ..
-            }) => self.messages.delete_selected(),
-            _ => tracing::debug!("{event:?}"),
-        }
+    fn handle_main_event(&mut self, _event: Event) {
+        // TODO: resize, mouse, etc
     }
 
     fn handle_message(&mut self, message: Message) {
@@ -121,28 +93,76 @@ async fn run_inner(
     mut term: ratatui::DefaultTerminal,
     mut messages: mpsc::UnboundedReceiver<Message>,
 ) -> std::io::Result<()> {
-    use futures::{future::Either, stream::StreamExt};
+    use futures::future::{select, Either};
+    use std::pin::pin;
 
     let mut state = State::default();
 
-    let mut term_events = crossterm::event::EventStream::new();
+    let (key_events, mut term_events) = event_handler();
+    let mut keymap = KeymapHandler::new(key_events);
     while !state.stopped {
         term.draw(|frame| frame.render_widget(&mut state, frame.area()))?;
-        match futures::future::select(term_events.next(), std::pin::pin!(messages.recv())).await {
-            Either::Left((Some(Ok(event)), _)) => state.handle_event(event),
-            Either::Left((Some(Err(err)), _)) => {
-                tracing::warn!("error reading terminal event: {err}")
+        let event = match select(
+            select(
+                pin!(term_events.recv()),
+                pin!(keymap.next(&state.main_keys)),
+            ),
+            pin!(messages.recv()),
+        )
+        .await
+        {
+            Either::Left((Either::Left((e, _)), _)) => Either::Left(Either::Left(e)),
+            Either::Left((Either::Right((e, _)), _)) => Either::Left(Either::Right(e)),
+            Either::Right((e, _)) => Either::Right(e),
+        };
+        match event {
+            Either::Left(Either::Left(Some(event))) => state.handle_event(event),
+            Either::Left(Either::Right(Some((_keys, _action)))) => {
+                todo!();
             }
-            Either::Right((Some(message), _)) => state.handle_message(message),
-            Either::Left((None, _)) => {
+            Either::Right(Some(message)) => state.handle_message(message),
+            Either::Left(Either::Left(None)) | Either::Left(Either::Right(None)) => {
                 tracing::info!("term events stream stopped, shutting down");
                 break;
             }
-            Either::Right((None, _)) => {
+            Either::Right(None) => {
                 tracing::info!("message stream stopped, shutting down");
                 break;
             }
-        }
+        };
     }
     Ok(())
+}
+
+fn event_handler() -> (
+    mpsc::UnboundedReceiver<keymap::KeyEvent>,
+    mpsc::UnboundedReceiver<Event>,
+) {
+    let (key_event_tx, key_event_rx) = mpsc::unbounded_channel();
+    let (other_event_tx, other_event_rx) = mpsc::unbounded_channel();
+    std::thread::spawn(move || event_handler_inner(key_event_tx, other_event_tx));
+    (key_event_rx, other_event_rx)
+}
+
+fn event_handler_inner(
+    key_event_tx: mpsc::UnboundedSender<keymap::KeyEvent>,
+    other_event_tx: mpsc::UnboundedSender<Event>,
+) {
+    const TIMEOUT: std::time::Duration = std::time::Duration::from_millis(500);
+
+    while !(key_event_tx.is_closed() || other_event_tx.is_closed()) {
+        match crossterm::event::poll(TIMEOUT) {
+            Ok(true) => match crossterm::event::read() {
+                Ok(Event::Key(ev)) => {
+                    let _ = key_event_tx.send(ev.into());
+                }
+                Ok(ev) => {
+                    let _ = other_event_tx.send(ev);
+                }
+                Err(e) => tracing::warn!("failed to read terminal events: {e}"),
+            },
+            Ok(false) => {}
+            Err(e) => tracing::warn!("failed to poll terminal events: {e}"),
+        }
+    }
 }
