@@ -275,4 +275,13 @@ impl KeymapHandler {
             }
         }
     }
+
+    pub async fn next_cloned<A: Clone>(
+        &mut self,
+        keymap: &Keymap<A>,
+    ) -> Option<(&[KeyEvent], Option<A>)> {
+        self.next(keymap)
+            .await
+            .map(|(keys, action)| (keys, action.cloned()))
+    }
 }

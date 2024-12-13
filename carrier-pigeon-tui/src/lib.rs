@@ -6,7 +6,7 @@ use tokio::sync::mpsc;
 mod keymap;
 mod message_list;
 
-use keymap::{Keymap, KeymapHandler};
+use keymap::{KeyEvent, Keymap, KeymapHandler};
 use message_list::MessageListView;
 
 pub async fn run(messages: mpsc::UnboundedReceiver<Message>) -> std::io::Result<()> {
@@ -100,8 +100,12 @@ impl State {
         self.keymaps.active_keymap(self.mode)
     }
 
-    fn handle_event(&mut self, _event: Event) {
+    fn handle_event(&mut self, event: Event) {
         // TODO: resize, mouse, etc
+    }
+
+    fn handle_key_event(&mut self, (keys, action): (&[KeyEvent], Option<Action>)) {
+        // TODO: handle key events
     }
 
     fn handle_message(&mut self, message: Message) {
@@ -115,46 +119,32 @@ impl Widget for &mut State {
     }
 }
 
+macro_rules! handle_event {
+    ($state:expr, $event:expr, $handler:ident, $stream_name:literal) => {{
+        let state = &mut $state;
+        let Some(event) = $event else {
+            ::tracing::info!(concat!($stream_name, " stopped, shutting down"));
+            state.stopped = true;
+            continue;
+        };
+        state.$handler(event);
+    }};
+}
+
 async fn run_inner(
     mut term: ratatui::DefaultTerminal,
     mut messages: mpsc::UnboundedReceiver<Message>,
 ) -> std::io::Result<()> {
-    use futures::future::{select, Either};
-    use std::pin::pin;
-
     let mut state = State::default();
 
     let (key_events, mut term_events) = event_handler();
     let mut keymap = KeymapHandler::new(key_events);
     while !state.stopped {
         term.draw(|frame| frame.render_widget(&mut state, frame.area()))?;
-        let event = match select(
-            select(
-                pin!(term_events.recv()),
-                pin!(keymap.next(&state.active_keymap())),
-            ),
-            pin!(messages.recv()),
-        )
-        .await
-        {
-            Either::Left((Either::Left((e, _)), _)) => Either::Left(Either::Left(e)),
-            Either::Left((Either::Right((e, _)), _)) => Either::Left(Either::Right(e)),
-            Either::Right((e, _)) => Either::Right(e),
-        };
-        match event {
-            Either::Left(Either::Left(Some(event))) => state.handle_event(event),
-            Either::Left(Either::Right(Some((_keys, _action)))) => {
-                todo!();
-            }
-            Either::Right(Some(message)) => state.handle_message(message),
-            Either::Left(Either::Left(None)) | Either::Left(Either::Right(None)) => {
-                tracing::info!("term events stream stopped, shutting down");
-                break;
-            }
-            Either::Right(None) => {
-                tracing::info!("message stream stopped, shutting down");
-                break;
-            }
+        tokio::select! {
+            event = term_events.recv() => handle_event!(state, event, handle_event, "term events"),
+            event = keymap.next_cloned(state.active_keymap()) => handle_event!(state, event, handle_key_event, "key events"),
+            message = messages.recv() => handle_event!(state, message, handle_message, "message stream"),
         };
     }
     Ok(())
