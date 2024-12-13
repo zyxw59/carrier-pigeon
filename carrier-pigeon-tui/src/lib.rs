@@ -16,36 +16,53 @@ pub async fn run(messages: mpsc::UnboundedReceiver<Message>) -> std::io::Result<
     res
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 struct State {
     stopped: bool,
     messages: MessageListView,
-    main_keys: Keymap<MainEvent>,
+    keymaps: Keymaps,
     mode: Mode,
 }
 
-const DEFAULT_KEY_TIMEOUT: tokio::time::Duration = tokio::time::Duration::from_millis(500);
+#[derive(Debug)]
+struct Keymaps {
+    message_list: Keymap<Action>,
+    normal: Keymap<Action>,
+    insert: Keymap<Action>,
+    command: Keymap<Action>,
+}
 
-impl Default for State {
+impl Default for Keymaps {
     fn default() -> Self {
+        let mut message_list = Keymap::default();
+        message_list.keys.extend(
+            [
+                ("q", Action::Quit),
+                ("j", Action::SelectMessage(MessageSelector::Relative(-1))),
+                ("k", Action::SelectMessage(MessageSelector::Relative(1))),
+                ("gg", Action::SelectMessage(MessageSelector::FromStart(0))),
+                ("G", Action::SelectMessage(MessageSelector::FromEnd(0))),
+                ("dd", Action::DeleteSelectedMessage),
+            ]
+            .into_iter()
+            .map(|(s, a)| (keymap::parse_key_sequence(s).unwrap(), a)),
+        );
         Self {
-            stopped: false,
-            messages: Default::default(),
-            main_keys: Keymap {
-                keys: [
-                    ("q", MainEvent::Quit),
-                    ("j", MainEvent::SelectPrev),
-                    ("k", MainEvent::SelectNext),
-                    ("gg", MainEvent::SelectFirst),
-                    ("G", MainEvent::SelectLast),
-                    ("dd", MainEvent::DeleteSelected),
-                ]
-                .into_iter()
-                .map(|(s, a)| (keymap::parse_key_sequence(s).unwrap(), a))
-                .collect(),
-                timeout: DEFAULT_KEY_TIMEOUT,
-            },
-            mode: Mode::Main,
+            message_list,
+            normal: Keymap::default(),
+            insert: Keymap::default(),
+            command: Keymap::default(),
+        }
+    }
+}
+
+impl Keymaps {
+    fn active_keymap(&self, mode: Mode) -> &Keymap<Action> {
+        match mode {
+            Mode::MessageList => &self.message_list,
+            Mode::Normal => &self.normal,
+            Mode::Insert => &self.insert,
+            Mode::Command => &self.command,
         }
     }
 }
@@ -54,27 +71,36 @@ impl Default for State {
 enum Mode {
     /// Main view, with the message list selected
     #[default]
-    Main,
+    MessageList,
+    /// Normal mode for editing messages
+    Normal,
+    /// Insert mode for editing messages
+    Insert,
+    /// Single-line editing mode for entering commands
+    Command,
 }
 
 #[derive(Debug, Clone)]
-enum MainEvent {
+enum Action {
     Quit,
-    SelectPrev,
-    SelectNext,
-    SelectFirst,
-    SelectLast,
-    DeleteSelected,
+    SelectMessage(MessageSelector),
+    // TODO: more general
+    DeleteSelectedMessage,
+}
+
+#[derive(Debug, Clone)]
+enum MessageSelector {
+    FromStart(usize),
+    FromEnd(usize),
+    Relative(isize),
 }
 
 impl State {
-    fn handle_event(&mut self, event: Event) {
-        match self.mode {
-            Mode::Main => self.handle_main_event(event),
-        }
+    fn active_keymap(&self) -> &Keymap<Action> {
+        self.keymaps.active_keymap(self.mode)
     }
 
-    fn handle_main_event(&mut self, _event: Event) {
+    fn handle_event(&mut self, _event: Event) {
         // TODO: resize, mouse, etc
     }
 
@@ -105,7 +131,7 @@ async fn run_inner(
         let event = match select(
             select(
                 pin!(term_events.recv()),
-                pin!(keymap.next(&state.main_keys)),
+                pin!(keymap.next(&state.active_keymap())),
             ),
             pin!(messages.recv()),
         )

@@ -184,6 +184,17 @@ pub struct Keymap<A> {
     pub timeout: Duration,
 }
 
+const DEFAULT_KEY_TIMEOUT: Duration = tokio::time::Duration::from_millis(500);
+
+impl<A> Default for Keymap<A> {
+    fn default() -> Self {
+        Self {
+            keys: BTreeMap::new(),
+            timeout: DEFAULT_KEY_TIMEOUT,
+        }
+    }
+}
+
 impl<A> Keymap<A> {
     fn entries_with_prefix<'s, 'p>(
         &'s self,
