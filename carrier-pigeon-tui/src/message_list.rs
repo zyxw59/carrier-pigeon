@@ -81,40 +81,6 @@ impl MessageListView {
         }
     }
 
-    pub fn select_next(&mut self) {
-        use std::ops::Bound;
-        self.cursor = match &self.cursor {
-            Some(cursor) => self
-                .messages
-                .range((Bound::Excluded(cursor), Bound::Unbounded))
-                .next(),
-            None => self.messages.iter().next(),
-        }
-        .map(|(k, _)| k.clone())
-        .or_else(|| self.cursor.clone());
-        self.list_state.select_next();
-    }
-
-    pub fn select_prev(&mut self) {
-        self.cursor = match &self.cursor {
-            Some(cursor) => self.messages.range(..cursor).next_back(),
-            None => self.messages.iter().next_back(),
-        }
-        .map(|(k, _)| k.clone())
-        .or_else(|| self.cursor.clone());
-        self.list_state.select_previous();
-    }
-
-    pub fn select_first(&mut self) {
-        self.cursor = self.messages.keys().next().cloned();
-        self.list_state.select_first();
-    }
-
-    pub fn select_last(&mut self) {
-        self.cursor = self.messages.keys().next_back().cloned();
-        self.list_state.select_last();
-    }
-
     pub fn insert(&mut self, message: Message) {
         if self.cursor.is_none() {
             self.cursor = Some(message.key());
