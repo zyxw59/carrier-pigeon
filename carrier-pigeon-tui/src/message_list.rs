@@ -8,6 +8,13 @@ use ratatui::{
     widgets::{List, ListItem, ListState, StatefulWidget, Widget},
 };
 
+#[derive(Debug, Clone)]
+pub enum MessageSelector {
+    FromStart(usize),
+    FromEnd(usize),
+    Relative(isize),
+}
+
 #[derive(Debug)]
 pub struct MessageListView {
     messages: BTreeMap<MessageKey, Message>,
@@ -24,7 +31,7 @@ impl Default for MessageListView {
         Self {
             messages: Default::default(),
             cursor: None,
-            list_state: Default::default(),
+            list_state: ListState::default().with_selected(Some(0)),
             list_items: List::default().highlight_symbol("-> "),
             dirty: false,
         }
@@ -32,6 +39,48 @@ impl Default for MessageListView {
 }
 
 impl MessageListView {
+    pub fn select(&mut self, selector: MessageSelector) {
+        use std::ops::Bound;
+        match selector {
+            MessageSelector::FromStart(index) => {
+                self.cursor = self.messages.keys().nth(index).cloned();
+                *self.list_state.selected_mut() = Some(index);
+            }
+            MessageSelector::FromEnd(index) => {
+                self.cursor = self.messages.keys().nth_back(index).cloned();
+                *self.list_state.selected_mut() =
+                    Some(self.messages.len().saturating_sub(index) - 1);
+            }
+            MessageSelector::Relative(0) => {}
+            MessageSelector::Relative(offset @ 1..) => {
+                let lower_bound = self
+                    .cursor
+                    .as_ref()
+                    .map_or(Bound::Unbounded, Bound::Excluded);
+                self.cursor = self
+                    .messages
+                    .range((lower_bound, Bound::Unbounded))
+                    .nth(offset as usize - 1)
+                    .map(|(k, _)| k.clone())
+                    .or_else(|| self.cursor.clone());
+                self.list_state.scroll_down_by(offset as u16);
+            }
+            MessageSelector::Relative(offset @ ..=-1) => {
+                let upper_bound = self
+                    .cursor
+                    .as_ref()
+                    .map_or(Bound::Unbounded, Bound::Excluded);
+                self.cursor = self
+                    .messages
+                    .range((Bound::Unbounded, upper_bound))
+                    .nth_back(-(offset + 1) as usize)
+                    .map(|(k, _)| k.clone())
+                    .or_else(|| self.cursor.clone());
+                self.list_state.scroll_up_by((-offset) as u16);
+            }
+        }
+    }
+
     pub fn select_next(&mut self) {
         use std::ops::Bound;
         self.cursor = match &self.cursor {
@@ -67,6 +116,9 @@ impl MessageListView {
     }
 
     pub fn insert(&mut self, message: Message) {
+        if self.cursor.is_none() {
+            self.cursor = Some(message.key());
+        }
         self.messages.insert(message.key(), message);
         self.dirty = true;
     }
@@ -112,7 +164,7 @@ impl MessageListView {
                 ListItem::new(message_to_text(msg))
             })
             .collect::<Vec<_>>();
-        self.list_state.select(selected_idx);
+        self.list_state.select(Some(selected_idx.unwrap_or(0)));
         self.list_items = std::mem::take(&mut self.list_items).items(items);
         self.dirty = false;
     }

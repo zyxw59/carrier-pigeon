@@ -7,7 +7,7 @@ mod keymap;
 mod message_list;
 
 use keymap::{KeyEvent, Keymap, KeymapHandler};
-use message_list::MessageListView;
+use message_list::{MessageListView, MessageSelector};
 
 pub async fn run(messages: mpsc::UnboundedReceiver<Message>) -> std::io::Result<()> {
     let terminal = ratatui::init();
@@ -38,10 +38,10 @@ impl Default for Keymaps {
         message_list.keys.extend(
             [
                 ("q", Action::Quit),
-                ("j", Action::SelectMessage(MessageSelector::Relative(-1))),
-                ("k", Action::SelectMessage(MessageSelector::Relative(1))),
+                ("j", Action::SelectMessage(MessageSelector::Relative(1))),
+                ("k", Action::SelectMessage(MessageSelector::Relative(-1))),
                 ("gg", Action::SelectMessage(MessageSelector::FromStart(0))),
-                ("G", Action::SelectMessage(MessageSelector::FromEnd(0))),
+                ("<S-G>", Action::SelectMessage(MessageSelector::FromEnd(0))),
                 ("dd", Action::DeleteSelectedMessage),
             ]
             .into_iter()
@@ -88,13 +88,6 @@ enum Action {
     DeleteSelectedMessage,
 }
 
-#[derive(Debug, Clone)]
-enum MessageSelector {
-    FromStart(usize),
-    FromEnd(usize),
-    Relative(isize),
-}
-
 impl State {
     fn active_keymap(&self) -> &Keymap<Action> {
         self.keymaps.active_keymap(self.mode)
@@ -105,7 +98,22 @@ impl State {
     }
 
     fn handle_key_event(&mut self, (keys, action): (&[KeyEvent], Option<Action>)) {
-        // TODO: handle key events
+        self.insert_keys(keys);
+        match action {
+            Some(Action::Quit) => self.stopped = true,
+            Some(Action::SelectMessage(selector)) => self.messages.select(selector),
+            Some(Action::DeleteSelectedMessage) => self.messages.delete_selected(),
+            None => {}
+        }
+    }
+
+    /// Insert keypresses into the active input field, if in insert mode
+    fn insert_keys(&mut self, keys: &[KeyEvent]) {
+        match self.mode {
+            Mode::Insert => todo!(),
+            Mode::Command => todo!(),
+            Mode::MessageList | Mode::Normal => {}
+        }
     }
 
     fn handle_message(&mut self, message: Message) {
@@ -131,6 +139,14 @@ macro_rules! handle_event {
     }};
 }
 
+macro_rules! select_events {
+    ($state:ident; $($name:literal: $stream:expr => $handler:ident),+ $(,)?) => {
+        tokio::select! {
+            $(e = $stream => handle_event!($state, e, $handler, $name),)*
+        }
+    }
+}
+
 async fn run_inner(
     mut term: ratatui::DefaultTerminal,
     mut messages: mpsc::UnboundedReceiver<Message>,
@@ -141,10 +157,11 @@ async fn run_inner(
     let mut keymap = KeymapHandler::new(key_events);
     while !state.stopped {
         term.draw(|frame| frame.render_widget(&mut state, frame.area()))?;
-        tokio::select! {
-            event = term_events.recv() => handle_event!(state, event, handle_event, "term events"),
-            event = keymap.next_cloned(state.active_keymap()) => handle_event!(state, event, handle_key_event, "key events"),
-            message = messages.recv() => handle_event!(state, message, handle_message, "message stream"),
+        select_events! {
+            state;
+            "term events": term_events.recv() => handle_event,
+            "key events": keymap.next_cloned(state.active_keymap()) => handle_key_event,
+            "message stream": messages.recv() => handle_message,
         };
     }
     Ok(())
