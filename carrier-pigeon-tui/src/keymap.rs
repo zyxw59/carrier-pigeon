@@ -57,6 +57,16 @@ pub struct KeyEvent {
     pub modifiers: KeyModifiers,
 }
 
+impl KeyEvent {
+    pub fn as_char(self) -> Option<char> {
+        if let (true, KeyCode::Char(c)) = (self.modifiers.is_empty(), self.code) {
+            Some(c)
+        } else {
+            None
+        }
+    }
+}
+
 impl From<crossterm::event::KeyEvent> for KeyEvent {
     fn from(event: crossterm::event::KeyEvent) -> Self {
         Self {
@@ -123,7 +133,8 @@ pub enum KeyCode {
 impl KeyCode {
     fn parse_char(input: &str) -> nom::IResult<&str, Self> {
         nom::combinator::map(
-            nom::character::complete::satisfy(nom_unicode::is_alphanumeric),
+            // nom::character::complete::satisfy(nom_unicode::is_alphanumeric),
+            nom::character::complete::anychar,
             Self::Char,
         )(input)
     }

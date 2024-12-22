@@ -2,6 +2,7 @@ use carrier_pigeon_common::Message;
 use crossterm::event::Event;
 use ratatui::{buffer::Buffer, layout::Rect, widgets::Widget};
 use tokio::sync::mpsc;
+use tui_input::Input;
 
 mod keymap;
 mod message_list;
@@ -21,6 +22,8 @@ struct State {
     stopped: bool,
     messages: MessageListView,
     keymaps: Keymaps,
+    command_line: Input,
+    compose_box: Input,
     mode: Mode,
 }
 
@@ -43,6 +46,16 @@ impl Default for Keymaps {
                 ("gg", Action::SelectMessage(MessageSelector::FromStart(0))),
                 ("<S-G>", Action::SelectMessage(MessageSelector::FromEnd(0))),
                 ("dd", Action::DeleteSelectedMessage),
+                (":", Action::Mode(Mode::Command)),
+            ]
+            .into_iter()
+            .map(|(s, a)| (keymap::parse_key_sequence(s).unwrap(), a)),
+        );
+        let mut command = Keymap::default();
+        command.keys.extend(
+            [
+                ("<Esc>", Action::CancelCommand),
+                ("<CR>", Action::ExecuteCommand),
             ]
             .into_iter()
             .map(|(s, a)| (keymap::parse_key_sequence(s).unwrap(), a)),
@@ -51,7 +64,7 @@ impl Default for Keymaps {
             message_list,
             normal: Keymap::default(),
             insert: Keymap::default(),
-            command: Keymap::default(),
+            command,
         }
     }
 }
@@ -86,6 +99,9 @@ enum Action {
     SelectMessage(MessageSelector),
     // TODO: more general
     DeleteSelectedMessage,
+    Mode(Mode),
+    CancelCommand,
+    ExecuteCommand,
 }
 
 impl State {
@@ -103,16 +119,35 @@ impl State {
             Some(Action::Quit) => self.stopped = true,
             Some(Action::SelectMessage(selector)) => self.messages.select(selector),
             Some(Action::DeleteSelectedMessage) => self.messages.delete_selected(),
+            Some(Action::Mode(mode)) => self.mode = mode,
+            Some(Action::CancelCommand) => {
+                self.command_line.reset();
+                self.mode = Mode::MessageList;
+            }
+            Some(Action::ExecuteCommand) => {
+                // TODO: execute command
+                self.command_line.reset();
+                self.mode = Mode::MessageList;
+            }
             None => {}
         }
     }
 
     /// Insert keypresses into the active input field, if in insert mode
     fn insert_keys(&mut self, keys: &[KeyEvent]) {
+        let Some(input) = self.active_input() else {
+            return;
+        };
+        for c in keys.iter().filter_map(|ev| ev.as_char()) {
+            input.handle(tui_input::InputRequest::InsertChar(c));
+        }
+    }
+
+    fn active_input(&mut self) -> Option<&mut Input> {
         match self.mode {
-            Mode::Insert => todo!(),
-            Mode::Command => todo!(),
-            Mode::MessageList | Mode::Normal => {}
+            Mode::Insert => Some(&mut self.compose_box),
+            Mode::Command => Some(&mut self.command_line),
+            Mode::MessageList | Mode::Normal => None,
         }
     }
 
@@ -123,7 +158,16 @@ impl State {
 
 impl Widget for &mut State {
     fn render(self, area: Rect, buffer: &mut Buffer) {
-        self.messages.render(area, buffer)
+        use ratatui::layout::{Constraint, Layout};
+        let layout = Layout::vertical([
+            Constraint::Percentage(100),
+            Constraint::Length(1),
+            Constraint::Length(1),
+        ]);
+        let [messages, command_line, compose_box] = layout.areas(area);
+        self.messages.render(messages, buffer);
+        self.command_line.value().render(command_line, buffer);
+        self.compose_box.value().render(compose_box, buffer);
     }
 }
 
