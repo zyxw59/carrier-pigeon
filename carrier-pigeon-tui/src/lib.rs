@@ -115,21 +115,23 @@ impl State {
 
     fn handle_key_event(&mut self, (keys, action): (&[KeyEvent], Option<Action>)) {
         self.insert_keys(keys);
+        let Some(action) = action else {
+            return;
+        };
         match action {
-            Some(Action::Quit) => self.stopped = true,
-            Some(Action::SelectMessage(selector)) => self.messages.select(selector),
-            Some(Action::DeleteSelectedMessage) => self.messages.delete_selected(),
-            Some(Action::Mode(mode)) => self.mode = mode,
-            Some(Action::CancelCommand) => {
+            Action::Quit => self.stopped = true,
+            Action::SelectMessage(selector) => self.messages.select(selector),
+            Action::DeleteSelectedMessage => self.messages.delete_selected(),
+            Action::Mode(mode) => self.mode = mode,
+            Action::CancelCommand => {
                 self.command_line.reset();
                 self.mode = Mode::MessageList;
             }
-            Some(Action::ExecuteCommand) => {
+            Action::ExecuteCommand => {
                 // TODO: execute command
                 self.command_line.reset();
                 self.mode = Mode::MessageList;
             }
-            None => {}
         }
     }
 
