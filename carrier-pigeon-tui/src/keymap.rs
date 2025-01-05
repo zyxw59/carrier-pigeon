@@ -11,6 +11,12 @@ use tokio::{sync::mpsc, time::Duration};
 // need to be passed thru when the timeout expires, so we can't just check the deadline when
 // processing a new input
 
+
+// TODO: switch parsing to regex, something like:
+// "\\<|<(?:[ACMS]-)*(?:\>|Esc|CR|BS|Del|Left|Right|Up|Down|Home|End|PageUp|PageDown|Tab|Ins|F\d+|.)>|."
+// altho it'll need a bit of massaging to properly handle things like spaces and to easily extract
+// the relevant bits of info
+
 pub fn parse_key_sequence(input: &str) -> Result<Vec<KeyEvent>, nom::error::Error<&str>> {
     use nom::Finish;
     nom::multi::many1(parse_key)(input).finish().map(|(_, k)| k)
