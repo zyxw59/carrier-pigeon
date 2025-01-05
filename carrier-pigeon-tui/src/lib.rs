@@ -6,6 +6,7 @@ use tui_input::Input;
 
 mod keymap;
 mod message_list;
+mod textbox;
 
 use keymap::{KeyEvent, Keymap, KeymapHandler};
 use message_list::{MessageListView, MessageSelector};
