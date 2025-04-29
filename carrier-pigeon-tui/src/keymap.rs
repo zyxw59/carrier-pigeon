@@ -11,6 +11,12 @@ use tokio::{sync::mpsc, time::Duration};
 // need to be passed thru when the timeout expires, so we can't just check the deadline when
 // processing a new input
 
+
+// TODO: switch parsing to regex, something like:
+// "\\<|<(?:[ACMS]-)*(?:\>|Esc|CR|BS|Del|Left|Right|Up|Down|Home|End|PageUp|PageDown|Tab|Ins|F\d+|.)>|."
+// altho it'll need a bit of massaging to properly handle things like spaces and to easily extract
+// the relevant bits of info
+
 pub fn parse_key_sequence(input: &str) -> Result<Vec<KeyEvent>, nom::error::Error<&str>> {
     use nom::Finish;
     nom::multi::many1(parse_key)(input).finish().map(|(_, k)| k)
@@ -57,6 +63,25 @@ pub struct KeyEvent {
     pub modifiers: KeyModifiers,
 }
 
+impl KeyEvent {
+    pub fn as_char(self) -> Option<char> {
+        if let (true, KeyCode::Char(c)) = (self.modifiers.is_empty(), self.code) {
+            Some(c)
+        } else {
+            None
+        }
+    }
+}
+
+impl From<crossterm::event::KeyEvent> for KeyEvent {
+    fn from(event: crossterm::event::KeyEvent) -> Self {
+        Self {
+            code: event.code.into(),
+            modifiers: event.modifiers,
+        }
+    }
+}
+
 impl From<KeyCode> for KeyEvent {
     fn from(code: KeyCode) -> Self {
         Self {
@@ -90,7 +115,6 @@ impl PartialEq for KeyEvent {
 
 // Our own version of `crossterm::event::KeyCode`
 // https://github.com/crossterm-rs/crossterm/pull/951
-#[allow(unused)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd)]
 pub enum KeyCode {
     Char(char),
@@ -115,7 +139,8 @@ pub enum KeyCode {
 impl KeyCode {
     fn parse_char(input: &str) -> nom::IResult<&str, Self> {
         nom::combinator::map(
-            nom::character::complete::satisfy(nom_unicode::is_alphanumeric),
+            // nom::character::complete::satisfy(nom_unicode::is_alphanumeric),
+            nom::character::complete::anychar,
             Self::Char,
         )(input)
     }
@@ -176,52 +201,18 @@ pub struct Keymap<A> {
     pub timeout: Duration,
 }
 
-impl<A: Clone> Keymap<A> {
-    pub async fn run(
-        &mut self,
-        keys_rx: &mut mpsc::UnboundedReceiver<KeyEvent>,
-        passthru_callback: impl FnMut(&[KeyEvent]),
-        mut action_callback: impl FnMut(A),
-    ) {
-        let mut buffer = KeyBuffer::new(passthru_callback);
-        loop {
-            let event = if buffer.is_empty() {
-                Ok(keys_rx.recv().await)
-            } else {
-                tokio::time::timeout(self.timeout, keys_rx.recv()).await
-            };
-            match event {
-                Ok(Some(event)) => {
-                    // We store what is essentially a rolling window of recent keypresses. with
-                    // each new keypress, we check that window against our keymap to see if it is
-                    // a valid prefix to any mapping. If it is, we then check if it is a complete
-                    // mapping (not just a prefix), and then return the mapped action. If it is
-                    // not a valid prefix, we drop the least recent keypress, and repeat.
-                    //
-                    // In this manner, except for the most recent keypress, the buffer is always a
-                    // valid prefix of at least one mapping, so its size is limited by the length
-                    // of the longest mapping.
-                    buffer.push(event);
-                    let (skipped, action) = (0..buffer.len())
-                        .find_map(|i| self.get(&buffer[i..]).map(|action| (i, action)))
-                        .unwrap_or((buffer.len(), None));
-                    buffer.passthru_n(skipped);
-                    if let Some(action) = action {
-                        buffer.clear();
-                        action_callback(action);
-                    }
-                }
-                Ok(None) => {
-                    tracing::info!("key events stream stopped, shutting down");
-                    break;
-                }
-                Err(_) => {
-                    buffer.passthru_all();
-                }
-            }
+const DEFAULT_KEY_TIMEOUT: Duration = tokio::time::Duration::from_millis(500);
+
+impl<A> Default for Keymap<A> {
+    fn default() -> Self {
+        Self {
+            keys: BTreeMap::new(),
+            timeout: DEFAULT_KEY_TIMEOUT,
         }
     }
+}
 
+impl<A> Keymap<A> {
     fn entries_with_prefix<'s, 'p>(
         &'s self,
         prefix: &'p [KeyEvent],
@@ -239,55 +230,75 @@ impl<A: Clone> Keymap<A> {
     /// - `Some(Some(action))`: the key sequence is mapped to the action
     /// - `Some(None)`: the key sequence is a prefix to at least one action
     /// - `None`: the key sequence is not a prefix to any action
-    fn get(&self, keys: &[KeyEvent]) -> Option<Option<A>> {
+    fn get(&self, keys: &[KeyEvent]) -> Option<Option<&A>> {
         self.entries_with_prefix(keys)
             .next()
-            .map(|(k, v)| (k == keys).then_some(v.clone()))
+            .map(|(k, v)| (k == keys).then_some(v))
     }
 }
 
-struct KeyBuffer<F: FnMut(&[KeyEvent])> {
+pub struct KeymapHandler {
+    keys_rx: mpsc::UnboundedReceiver<KeyEvent>,
     buffer: Vec<KeyEvent>,
-    passthru_callback: F,
+    buffer_skip: usize,
 }
 
-impl<F: FnMut(&[KeyEvent])> KeyBuffer<F> {
-    pub fn new(passthru_callback: F) -> Self {
+impl KeymapHandler {
+    pub fn new(keys_rx: mpsc::UnboundedReceiver<KeyEvent>) -> Self {
         Self {
+            keys_rx,
             buffer: Vec::new(),
-            passthru_callback,
+            buffer_skip: 0,
         }
     }
 
-    /// Call the callback on the first `n` items, then remove them from the buffer.
-    pub fn passthru_n(&mut self, n: usize) {
-        (self.passthru_callback)(&self.buffer[..n]);
-        self.buffer.drain(n..).for_each(drop);
+    pub async fn next<'s, 'k, A>(
+        &'s mut self,
+        keymap: &'k Keymap<A>,
+    ) -> Option<(&'s [KeyEvent], Option<&'k A>)> {
+        // clear any used keys from the buffer
+        self.buffer.drain(..self.buffer_skip).for_each(drop);
+        self.buffer_skip = 0;
+        let event = if self.buffer.is_empty() {
+            Ok(self.keys_rx.recv().await)
+        } else {
+            tokio::time::timeout(keymap.timeout, self.keys_rx.recv()).await
+        };
+        match event {
+            Ok(Some(event)) => {
+                // We store what is essentially a rolling window of recent keypresses. with
+                // each new keypress, we check that window against our keymap to see if it is
+                // a valid prefix to any mapping. If it is, we then check if it is a complete
+                // mapping (not just a prefix), and then return the mapped action. If it is
+                // not a valid prefix, we drop the least recent keypress, and repeat.
+                //
+                // In this manner, except for the most recent keypress, the buffer is always a
+                // valid prefix of at least one mapping, so its size is limited by the length
+                // of the longest mapping.
+                self.buffer.push(event);
+                let (skipped, action) = (0..self.buffer.len())
+                    .find_map(|i| keymap.get(&self.buffer[i..]).map(|action| (i, action)))
+                    .unwrap_or((self.buffer.len(), None));
+                self.buffer_skip = skipped;
+                if action.is_some() {
+                    self.buffer_skip = self.buffer.len();
+                }
+                Some((&self.buffer[..skipped], action))
+            }
+            Ok(None) => None,
+            Err(_timeout) => {
+                self.buffer_skip = self.buffer.len();
+                Some((&self.buffer, None))
+            }
+        }
     }
 
-    /// Call the callback on the whole buffer, then clear it.
-    pub fn passthru_all(&mut self) {
-        (self.passthru_callback)(&self.buffer);
-        self.buffer.clear();
-    }
-}
-
-impl<F: FnMut(&[KeyEvent])> std::ops::Deref for KeyBuffer<F> {
-    type Target = Vec<KeyEvent>;
-
-    fn deref(&self) -> &Self::Target {
-        &self.buffer
-    }
-}
-
-impl<F: FnMut(&[KeyEvent])> std::ops::DerefMut for KeyBuffer<F> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.buffer
-    }
-}
-
-impl<F: FnMut(&[KeyEvent])> Drop for KeyBuffer<F> {
-    fn drop(&mut self) {
-        self.passthru_all();
+    pub async fn next_cloned<A: Clone>(
+        &mut self,
+        keymap: &Keymap<A>,
+    ) -> Option<(&[KeyEvent], Option<A>)> {
+        self.next(keymap)
+            .await
+            .map(|(keys, action)| (keys, action.cloned()))
     }
 }

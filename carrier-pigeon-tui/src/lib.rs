@@ -1,13 +1,15 @@
 use carrier_pigeon_common::Message;
-use crossterm::event::{Event, KeyCode, KeyEvent};
+use crossterm::event::Event;
 use ratatui::{buffer::Buffer, layout::Rect, widgets::Widget};
 use tokio::sync::mpsc;
+use tui_input::Input;
 
 mod keymap;
 mod message_list;
+mod textbox;
 
-use keymap::Keymap;
-use message_list::MessageListView;
+use keymap::{KeyEvent, Keymap, KeymapHandler};
+use message_list::{MessageListView, MessageSelector};
 
 pub async fn run(messages: mpsc::UnboundedReceiver<Message>) -> std::io::Result<()> {
     let terminal = ratatui::init();
@@ -16,36 +18,65 @@ pub async fn run(messages: mpsc::UnboundedReceiver<Message>) -> std::io::Result<
     res
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 struct State {
     stopped: bool,
     messages: MessageListView,
-    main_keys: Keymap<MainEvent>,
+    keymaps: Keymaps,
+    command_line: Input,
+    compose_box: Input,
     mode: Mode,
 }
 
-const DEFAULT_KEY_TIMEOUT: tokio::time::Duration = tokio::time::Duration::from_millis(500);
+#[derive(Debug)]
+struct Keymaps {
+    message_list: Keymap<Action>,
+    normal: Keymap<Action>,
+    insert: Keymap<Action>,
+    command: Keymap<Action>,
+}
 
-impl Default for State {
+impl Default for Keymaps {
     fn default() -> Self {
+        let mut message_list = Keymap::default();
+        message_list.keys.extend(
+            [
+                ("q", Action::Quit),
+                ("j", Action::SelectMessage(MessageSelector::Relative(1))),
+                ("k", Action::SelectMessage(MessageSelector::Relative(-1))),
+                ("gg", Action::SelectMessage(MessageSelector::FromStart(0))),
+                ("<S-G>", Action::SelectMessage(MessageSelector::FromEnd(0))),
+                ("dd", Action::DeleteSelectedMessage),
+                (":", Action::Mode(Mode::Command)),
+            ]
+            .into_iter()
+            .map(|(s, a)| (keymap::parse_key_sequence(s).unwrap(), a)),
+        );
+        let mut command = Keymap::default();
+        command.keys.extend(
+            [
+                ("<Esc>", Action::CancelCommand),
+                ("<CR>", Action::ExecuteCommand),
+            ]
+            .into_iter()
+            .map(|(s, a)| (keymap::parse_key_sequence(s).unwrap(), a)),
+        );
         Self {
-            stopped: false,
-            messages: Default::default(),
-            main_keys: Keymap {
-                keys: [
-                    ("q", MainEvent::Quit),
-                    ("j", MainEvent::SelectPrev),
-                    ("k", MainEvent::SelectNext),
-                    ("gg", MainEvent::SelectFirst),
-                    ("G", MainEvent::SelectLast),
-                    ("dd", MainEvent::DeleteSelected),
-                ]
-                .into_iter()
-                .map(|(s, a)| (keymap::parse_key_sequence(s).unwrap(), a))
-                .collect(),
-                timeout: DEFAULT_KEY_TIMEOUT,
-            },
-            mode: Mode::Main,
+            message_list,
+            normal: Keymap::default(),
+            insert: Keymap::default(),
+            command,
+        }
+    }
+}
+
+impl Keymaps {
+    fn active_keymap(&self, mode: Mode) -> &Keymap<Action> {
+        match mode {
+            Mode::MessageList => &self.message_list,
+            Mode::Normal => &self.normal,
+            Mode::Insert => &self.insert,
+            Mode::Command => &self.command,
         }
     }
 }
@@ -54,55 +85,72 @@ impl Default for State {
 enum Mode {
     /// Main view, with the message list selected
     #[default]
-    Main,
+    MessageList,
+    /// Normal mode for editing messages
+    Normal,
+    /// Insert mode for editing messages
+    Insert,
+    /// Single-line editing mode for entering commands
+    Command,
 }
 
 #[derive(Debug, Clone)]
-enum MainEvent {
+enum Action {
     Quit,
-    SelectPrev,
-    SelectNext,
-    SelectFirst,
-    SelectLast,
-    DeleteSelected,
+    SelectMessage(MessageSelector),
+    // TODO: more general
+    DeleteSelectedMessage,
+    Mode(Mode),
+    CancelCommand,
+    ExecuteCommand,
 }
 
 impl State {
+    fn active_keymap(&self) -> &Keymap<Action> {
+        self.keymaps.active_keymap(self.mode)
+    }
+
     fn handle_event(&mut self, event: Event) {
-        match self.mode {
-            Mode::Main => self.handle_main_event(event),
+        // TODO: resize, mouse, etc
+    }
+
+    fn handle_key_event(&mut self, (keys, action): (&[KeyEvent], Option<Action>)) {
+        self.insert_keys(keys);
+        let Some(action) = action else {
+            return;
+        };
+        match action {
+            Action::Quit => self.stopped = true,
+            Action::SelectMessage(selector) => self.messages.select(selector),
+            Action::DeleteSelectedMessage => self.messages.delete_selected(),
+            Action::Mode(mode) => self.mode = mode,
+            Action::CancelCommand => {
+                self.command_line.reset();
+                self.mode = Mode::MessageList;
+            }
+            Action::ExecuteCommand => {
+                // TODO: execute command
+                self.command_line.reset();
+                self.mode = Mode::MessageList;
+            }
         }
     }
 
-    fn handle_main_event(&mut self, event: Event) {
-        // TODO: configuration
-        // TODO: sequences
-        match event {
-            Event::Key(KeyEvent {
-                code: KeyCode::Char('q'),
-                ..
-            }) => self.stopped = true,
-            Event::Key(KeyEvent {
-                code: KeyCode::Char('j'),
-                ..
-            }) => self.messages.select_next(),
-            Event::Key(KeyEvent {
-                code: KeyCode::Char('k'),
-                ..
-            }) => self.messages.select_prev(),
-            Event::Key(KeyEvent {
-                code: KeyCode::Char('G'),
-                ..
-            }) => self.messages.select_last(),
-            Event::Key(KeyEvent {
-                code: KeyCode::Char('g'),
-                ..
-            }) => self.messages.select_first(),
-            Event::Key(KeyEvent {
-                code: KeyCode::Char('d'),
-                ..
-            }) => self.messages.delete_selected(),
-            _ => tracing::debug!("{event:?}"),
+    /// Insert keypresses into the active input field, if in insert mode
+    fn insert_keys(&mut self, keys: &[KeyEvent]) {
+        let Some(input) = self.active_input() else {
+            return;
+        };
+        for c in keys.iter().filter_map(|ev| ev.as_char()) {
+            input.handle(tui_input::InputRequest::InsertChar(c));
+        }
+    }
+
+    fn active_input(&mut self) -> Option<&mut Input> {
+        match self.mode {
+            Mode::Insert => Some(&mut self.compose_box),
+            Mode::Command => Some(&mut self.command_line),
+            Mode::MessageList | Mode::Normal => None,
         }
     }
 
@@ -113,7 +161,36 @@ impl State {
 
 impl Widget for &mut State {
     fn render(self, area: Rect, buffer: &mut Buffer) {
-        self.messages.render(area, buffer)
+        use ratatui::layout::{Constraint, Layout};
+        let layout = Layout::vertical([
+            Constraint::Percentage(100),
+            Constraint::Length(1),
+            Constraint::Length(1),
+        ]);
+        let [messages, command_line, compose_box] = layout.areas(area);
+        self.messages.render(messages, buffer);
+        self.command_line.value().render(command_line, buffer);
+        self.compose_box.value().render(compose_box, buffer);
+    }
+}
+
+macro_rules! handle_event {
+    ($state:expr, $event:expr, $handler:ident, $stream_name:literal) => {{
+        let state = &mut $state;
+        let Some(event) = $event else {
+            ::tracing::info!(concat!($stream_name, " stopped, shutting down"));
+            state.stopped = true;
+            continue;
+        };
+        state.$handler(event);
+    }};
+}
+
+macro_rules! select_events {
+    ($state:ident; $($name:literal: $stream:expr => $handler:ident),+ $(,)?) => {
+        tokio::select! {
+            $(e = $stream => handle_event!($state, e, $handler, $name),)*
+        }
     }
 }
 
@@ -121,28 +198,51 @@ async fn run_inner(
     mut term: ratatui::DefaultTerminal,
     mut messages: mpsc::UnboundedReceiver<Message>,
 ) -> std::io::Result<()> {
-    use futures::{future::Either, stream::StreamExt};
-
     let mut state = State::default();
 
-    let mut term_events = crossterm::event::EventStream::new();
+    let (key_events, mut term_events) = event_handler();
+    let mut keymap = KeymapHandler::new(key_events);
     while !state.stopped {
         term.draw(|frame| frame.render_widget(&mut state, frame.area()))?;
-        match futures::future::select(term_events.next(), std::pin::pin!(messages.recv())).await {
-            Either::Left((Some(Ok(event)), _)) => state.handle_event(event),
-            Either::Left((Some(Err(err)), _)) => {
-                tracing::warn!("error reading terminal event: {err}")
-            }
-            Either::Right((Some(message), _)) => state.handle_message(message),
-            Either::Left((None, _)) => {
-                tracing::info!("term events stream stopped, shutting down");
-                break;
-            }
-            Either::Right((None, _)) => {
-                tracing::info!("message stream stopped, shutting down");
-                break;
-            }
-        }
+        select_events! {
+            state;
+            "term events": term_events.recv() => handle_event,
+            "key events": keymap.next_cloned(state.active_keymap()) => handle_key_event,
+            "message stream": messages.recv() => handle_message,
+        };
     }
     Ok(())
+}
+
+fn event_handler() -> (
+    mpsc::UnboundedReceiver<keymap::KeyEvent>,
+    mpsc::UnboundedReceiver<Event>,
+) {
+    let (key_event_tx, key_event_rx) = mpsc::unbounded_channel();
+    let (other_event_tx, other_event_rx) = mpsc::unbounded_channel();
+    std::thread::spawn(move || event_handler_inner(key_event_tx, other_event_tx));
+    (key_event_rx, other_event_rx)
+}
+
+fn event_handler_inner(
+    key_event_tx: mpsc::UnboundedSender<keymap::KeyEvent>,
+    other_event_tx: mpsc::UnboundedSender<Event>,
+) {
+    const TIMEOUT: std::time::Duration = std::time::Duration::from_millis(500);
+
+    while !(key_event_tx.is_closed() || other_event_tx.is_closed()) {
+        match crossterm::event::poll(TIMEOUT) {
+            Ok(true) => match crossterm::event::read() {
+                Ok(Event::Key(ev)) => {
+                    let _ = key_event_tx.send(ev.into());
+                }
+                Ok(ev) => {
+                    let _ = other_event_tx.send(ev);
+                }
+                Err(e) => tracing::warn!("failed to read terminal events: {e}"),
+            },
+            Ok(false) => {}
+            Err(e) => tracing::warn!("failed to poll terminal events: {e}"),
+        }
+    }
 }
